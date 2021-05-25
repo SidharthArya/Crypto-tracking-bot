@@ -15,7 +15,6 @@ parser.add_argument('--conky')
 parser.add_argument('-f')
 parser.add_argument('--cb', default=False, action='store_true')
 args = parser.parse_args()
-me = os.path.isdir("/home/arya")
 date = datetime.datetime.now().strftime("%d-%m-%Y")
 if args.f:
     variables_file = args.f
