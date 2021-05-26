@@ -150,25 +150,25 @@ while True:
             up = 0
             down = 0
             if currency[1].isdigit():
-                current= data[currency[0] + "inr"]["last"]
+                current = data[currency[0] + "inr"]["last"]
                 if float(current) > float(currency[1]):
                     up += 1
-                    dispatcher.bot.send_message(chat_id=int(person), text="Target " + currency[0] +" of "+ currency[1] + " reached at " + str(crypto_output[currency[0]]))
+                    dispatcher.bot.send_message(chat_id=int(person), text="Target " + currency[0] +" of "+ currency[1] + " reached at " + current)
             if 2 < len(currency) and currency[2].isdigit():
                 if float(current) < float(currency[2]):
                     down += 1
-                    dispatcher.bot.send_message(chat_id=int(person), text="Loss " + currency[0] +" of "+ currency[2] + " reached at " + str(crypto_output[currency[0]]))
+                    dispatcher.bot.send_message(chat_id=int(person), text="Loss " + currency[0] +" of "+ currency[2] + " reached at " + current)
             if args.conky and me == person:
                 try:
                     coinbasev = str(1.0/float(coinb["data"]["rates"][currency[0].upper()]))
                 except:
-                    coinbasev = ""
+                    coinbasev = "-1"
                 if up > down:
                     conkytext += currency[0].capitalize() + ": ${color green}" +  current + "${color}\n"
                 elif up < down:
                     conkytext += currency[0].capitalize() + ": ${color red} " + current + "${color}\n"
                 else:
-                    conkytext += currency[0].capitalize() + ": " + current + " " + coinbasev + "\n"
+                    conkytext += currency[0].capitalize() + ": " + current + " " + str(round(float(coinbasev),2)) + "\n"
         if args.conky:
             with open(args.conky, 'w') as d:
                 d.truncate(0)

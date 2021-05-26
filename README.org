@@ -5,3 +5,6 @@
 In the interest of running one script for the specific task in my system. I have added a few things which handle things the way i organize stuff.
 + Conky printing - but this happens specifically after checking if i am running the script or not. Checking is not strict it can be bypassed. ~python crypto.py --conky~ can still be used if you need it too.
 + Added coinbase function, for easy comparison between wazirx and coinbase values. In order to use this, run the script as ~python crypto.py --cb~. Coinbase values are usually picked up by google on their interactive searches, which tends to have an overall impact in all markets.
+* Screenshot
+** Conky
+[[file:Screenshot/2021-05-26_07-34-50_2021-05-26-073304_1920x1080_scrot.png]]
