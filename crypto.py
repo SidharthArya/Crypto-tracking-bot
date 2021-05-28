@@ -1,179 +1,435 @@
 import datetime
 import pickle
 import requests
+import threading
 import time
 import re
 import os
-from telegram.ext import Updater
-from telegram import Update
-from telegram.ext import CallbackContext, PollAnswerHandler, PollHandler
 import sys
 import argparse
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--conky')
-parser.add_argument('-f')
-parser.add_argument('--cb', default=False, action='store_true')
-args = parser.parse_args()
-date = datetime.datetime.now().strftime("%d-%m-%Y")
-if args.f:
-    variables_file = args.f
-    try:
-        with open("/home/arya/Documents/Org/Bots/Telegram/me") as f:
-            me = f.read()
-    except:
-        me = ""
-else:
-    variables_file = '~/.config/crypto'
-    if not os.path.isfile(variables_file):
-        with open(variables_file, 'w') as f:
-            pass
-def save_variables():
-    with open(variables_file, 'wb') as f:
-        pickle.dump(variables, f)
-
-with open(variables_file, 'rb') as f:
-    variables = pickle.load(f)
-
-if args.conky:
-    with open(args.conky, 'w') as d:
-        d.truncate(0)
-        d.write("Cryptocurrency\n\n")
-
-
-def coinbase():
-    pass
-        
-crypto_output = {}
+import gi
+gi.require_version('Gio', '2.0')
+from gi.repository import Gio
+market_options = {
+    "wazirx": {
+        "markets": {"url": 'https://api.wazirx.com/api/v2/market-status',
+                    "key": "",
+                    "fn": lambda response: [i['baseMarket'] for i in response['markets']]},
+        "tickers": {"url": 'https://api.wazirx.com/api/v2/tickers',
+                    "per_fn": lambda k,v: (v['base_unit'],float(v['last'])) if v['quote_unit'] == 'inr' else None}
+                    },
     
-# Telegram
+    "coinbase": {
+        "markets": {"url": 'https://api.coinbase.com/v2/exchange-rates?currency=INR',
+                    "pre_key": "['data']['rates'].keys()",
+                    "fn": lambda x: [y.lower() for y in list(x)]},
+        "tickers": {"url": 'https://api.coinbase.com/v2/exchange-rates?currency=INR',
+                    "pre_key": "['data']['rates']",
+                    "per_fn": lambda k, v: (k.lower(), 1.0/float(v))}
+    },
+}
 
-updater = Updater(token=variables["KEY"], use_context=True)
+class Crypto:
+    def __init__(self,variables_file=None, telegram=False, conky=False, notify=False, markets=["wazirx", "coinbase"], main_market="wazirx", telegram_allow_new=False):
+        self.variables_file = variables_file
+        self.variables = self.load_variables()
+        self.alert_hooks = []
+        self.alert_output = {}
+        if telegram:
+            self.init_telegram(telegram_allow_new)
+        if conky:
+            self.init_conky(conky)
+        if notify:
+            self.notify_app = Gio.Application.new("hello.world", Gio.ApplicationFlags.FLAGS_NONE)
+            self.notify_app.register()
+            self.alert_hooks.append("notify")
+        self.markets = {}
+        self.main_market = main_market
+        for market in markets:
+            self.markets[market] = {}
+        self.prev_tickers = {}
+        self.tickers = {}
+        for market in markets:
+            self.tickers[market] = {}
+        self.fetch_markets()
+        self.fetch_tickers()
 
-dispatcher = updater.dispatcher
-
-response = requests.get('https://api.wazirx.com/api/v2/market-status')
-markets = [i['baseMarket'] for i in response.json()['markets']]
-print(variables["people"])
-
-
-
-def start(update, context):
-    context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a bot, please talk to me!")
-    if os.path.isdir("/home/arya"):
-        print(update,context)
-    else:
-        variables[str(update.effective_chat.id)] = []
-        context.bot.send_message(chat_id=update.effective_chat.id, text="Registered")
-        
-
-
-
-def echo (update, context):
-    if str(update.effective_chat.id) in variables['people'].keys():
-        lowered = update.message.text.lower()
-        if lowered[0:4] == 'list':
-            context.bot.send_message(chat_id=update.effective_chat.id, text="List: " + str(markets))
-            return
-        if lowered[0:3] == 'val':
-            temp = list(map(str.strip, lowered[3:].split(',')))
-            for i in temp:
-                context.bot.send_message(chat_id=update.effective_chat.id, text= i + ": " + str(crypto_output[i]))
-            return
-        if lowered[0:3] == 'get':
-            temp = list(map(str.strip, lowered[3:].split(',')))
-            context.bot.send_message(chat_id=update.effective_chat.id, text="Tracking: " + str(variables['people'][str(update.effective_chat.id)]))
-            return
-        if lowered[0:3] == 'add':
-            temp = list(map(str.strip, lowered[3:].split(',')))
-            temp2 = variables['people'][str(update.effective_chat.id)]
+    def start(self, t):
+        while True:
+            self.fetch_tickers()
+            self.compare()
+            self.alert()
+            time.sleep(t)
             
-            temp3 = [x for x in temp if x[0] in markets]
-            for rule in temp3:
-                temp2.append(rule)
-            variables['people'][str(update.effective_chat.id)] = list(set(temp2))
-            context.bot.send_message(chat_id=update.effective_chat.id, text="Tracking: "+ str(temp2))
-            save_variables()
-            return
-        if lowered[0:3] == 'del':
-            temp = list(map(str.strip, lowered[3:].split(',')))
-            temp2 = variables['people'][str(update.effective_chat.id)]
-            
-            temp3 = [x for x in temp[1:] if x in locations.keys()]
-            for rule in temp3:
-                temp2.append(rule)
-            variables['people'][str(update.effective_chat.id)] = list(set(temp2))
-            context.bot.send_message(chat_id=update.effective_chat.id, text="Tracking: "+ str(temp2))
-            save_variables()
-        
-        temp = list(map(str.split, list(map(str.strip, lowered.split(',')))))
-        temp3 = [x for x in temp if x[0] in markets]
-        variables['people'][str(update.effective_chat.id)] = temp3
-        context.bot.send_message(chat_id=update.effective_chat.id, text="Tracking: "+ str(temp3))
-        save_variables()
+    def compare(self):
+        for i in self.alert_hooks:
+            self.alert_output[i] = {}
+            self.alert_output[i] = eval("self.compare_" + i + "()")
+            eval("self.alert_" + i + "()")
+            print(self.alert_output)
             
 
-
-from telegram.ext import CommandHandler
-start_handler = CommandHandler('start', start)
-
-from telegram.ext import MessageHandler, Filters
-echo_handler = MessageHandler(Filters.text & (~Filters.command), echo)
-    
-dispatcher.add_handler(start_handler)
-dispatcher.add_handler(echo_handler)
-
-updater.start_polling()
-
-if args.conky:
-   with open(args.conky, 'w') as d:
-       d.truncate(0)
-       d.write("Cryptocurrency\n\n")
-
-while True:
-    prev_crypto_output = crypto_output
-    crypto_output = {}
-    try:
-        wazirx = requests.get('https://api.wazirx.com/api/v2/tickers')
-        data = wazirx.json()
-        if args.cb:
-            coinb = requests.get('https://api.coinbase.com/v2/exchange-rates?currency=INR')
-            coinb = coinb.json()
-    except Exception as e:
-        time.sleep(10)
-        print("Exception " + str(e))
-        continue
-    for person in variables["people"].keys():
-        if person == me:
-            conkytext = ""
-        for currency in variables["people"][person]:
-            up = 0
-            down = 0
-            if currency[1].isdigit():
-                current = data[currency[0] + "inr"]["last"]
-                if float(current) > float(currency[1]):
-                    up += 1
-                    dispatcher.bot.send_message(chat_id=int(person), text="Target " + currency[0] +" of "+ currency[1] + " reached at " + current)
-            if 2 < len(currency) and currency[2].isdigit():
-                if float(current) < float(currency[2]):
-                    down += 1
-                    dispatcher.bot.send_message(chat_id=int(person), text="Loss " + currency[0] +" of "+ currency[2] + " reached at " + current)
-            if args.conky and me == person:
-                try:
-                    coinbasev = str(1.0/float(coinb["data"]["rates"][currency[0].upper()]))
-                except:
-                    coinbasev = "-1"
-                if up > down:
-                    conkytext += currency[0].capitalize() + ": ${color green}" +  current + "${color}\n"
-                elif up < down:
-                    conkytext += currency[0].capitalize() + ": ${color red} " + current + "${color}\n"
+    def compare_telegram(self):
+        # print("Reached")
+        output = {}
+        for person, currencies in self.variables["people"].items():
+            output[person] = {}
+            for currency, condition in currencies.items():
+                output[person][currency] = []
+                if condition[0] in self.markets.keys():
+                    market = condition[0]
+                    condition = condition[1:]
                 else:
-                    conkytext += currency[0].capitalize() + ": " + current + " " + str(round(float(coinbasev),2)) + "\n"
-        if args.conky:
-            with open(args.conky, 'w') as d:
-                d.truncate(0)
-                d.write(conkytext)
+                    market = self.main_market
+                Label = False
+                if len(condition) == 3:
+                    Label = condition[2]
+                    condition = condition[0:2]
+                buy = condition[0]
+                sell = condition[1]
+                if Label:
+                    output[person][currency].append([self.comparator(self.tickers[market][currency], buy, sell), Label])
+                else:
+                    output[person][currency].append([self.comparator(self.tickers[market][currency], buy, sell)])
+                    
+        return output
+                    
+    def comparator(self, value, low, high):
+        output = 0
+        if low is None:
+            pass
+        elif value < low:
+            output -= 1
+        elif callable(low):
+            output -= low(value)
+        if high is None:
+            pass
+        elif value > high:
+            output += 1
+        elif callable(high):
+            output += high(value)
+        return output
+    def alert(self):
+        for fn in self.alert_hooks:
+            pass
+        #fn()
+    def __str__(self):
+        return "Variables: " + str(self.variables) + "\nHooks: " + str(self.alert_hooks) + "\nMarkets: " + str(self.markets)+ "\nTickers: " + str(self.tickers)
+    def fetch_markets(self):
+        while True:
+            try:
+                for i in self.markets.keys():
+                    self.markets[i] = requests.get(market_options[i]["markets"]["url"])
+                    self.markets[i] = self.markets[i].json()
+                    if "pre_key" in market_options[i]["markets"]:
+                        self.markets[i] = eval("self.markets[i]" + market_options[i]["markets"]["pre_key"])
+                    if ("fn" in market_options[i]["markets"]):
+                        self.markets[i] = market_options[i]["markets"]["fn"](self.markets[i])
+                    # self.markets[i] = [j['baseMarket'] for j in markets.json()['markets']]
+                break
+            except Exception as e:
+                if e is KeyboardInterrupt:
+                    self.save_variables()
+                print(str(e))
+                time.sleep(10)
+                continue
+    def fetch_tickers(self):
+        self.prev_tickers = self.tickers.copy()
+        while True:
+            try:
+                for i in self.tickers.keys():
+                    self.tickers[i] = requests.get(market_options[i]["tickers"]["url"])
+                    self.tickers[i] = self.tickers[i].json()
+                    if "pre_key" in market_options[i]["tickers"]:
+                        self.tickers[i] = eval("self.tickers[i]" + market_options[i]["tickers"]["pre_key"])
+                    if ("fn" in market_options[i]["tickers"]):
+                        self.tickers[i] = market_options[i]["tickers"]["fn"](self.tickers[i])
+                    if i == "wazirx":
+                        self.wazirx_response = self.tickers[i]
+                    if ("per_fn" in market_options[i]["tickers"]):
+                        self.tickers[i] = {y[0]: y[1] for k, v in self.tickers[i].items() if (y := market_options[i]["tickers"]["per_fn"](k, v)) is not None}
+                    # self.tickers[i] = [j['baseMarket'] for j in markets.json()['markets']]
+                break
+            except Exception as e:
+                if e is KeyboardInterrupt:
+                    self.save_variables()
+                print(str(e))
+                time.sleep(10)
+                continue
+    def init_conky(self, conky):
+        with open(conky, "w") as f:
+            f.truncate(0)
+        
+        self.conky = conky
+        self.alert_hooks.append("conky")
+    def init_telegram(self, allow_new):
+        self.telegram = Telegram(token=self.variables["KEY"], allow_new = allow_new, parent=self)
+        self.alert_hooks.append("telegram")
+    def list(self,u, p):
+        output_list = []
+        for k,v in self.markets.items():
+            output=""
+            output += "<b>" + k + "</b>\n"
+            for c in v:
+                output += str(c)
+                output += " "
+            output_list.append(output)
+        return output_list
+    def add(self, u, p):
+        self.add_rules(u, p[3:])
+    def track(self, u, p):
+        return [str(self.variables["people"][str(u)])]
+        
+    def value(self, u, p):
+        p = p[5:]
+        output = ""
+        if p.split()[0] in self.markets.keys():
+            cs = p.split()[1].split(",")
+            for c in cs:
+                output += c + ": " + str(self.tickers[p.split()[0]][c])
+        return [output]
+    def clear(self, u, p):
+        p = p[4:]
+        if p.strip() == "":
+            for i in p.strip().split(","):
+                self.variables["people"][str(u)][i] = {}
+        else:
+            self.variables["people"][str(u)] = {}
+    def add_rules(self, user_id, rules):
+        if str(user_id) not in self.variables["people"].keys():
+            print("User not registered:" + str(user_id))
+            return None
+        rules = rules.lower()
+        temp = (rules.strip().split()[0])
+        if temp in ["add", "list", "track", "clear", "value"]:
+            for text in eval("self."+temp)(user_id, rules):
+                self.telegram.dispatcher.bot.send_message(chat_id=user_id,text=text, parse_mode="html")
+            # self.telegram.dispatcher.bot.send_message(chat_id=user_id, text=output)
+        else:
+            for rule in rules.strip().split(","):
+                parsed_rule = self.parse_string_rule(rule)
+                # print(parsed_rule)
+                if parsed_rule == None:
+                    print("Bad Rule:" + rule)
+                    continue
+                if str(user_id) not in self.variables["people"].keys():
+                    self.variables["people"][str(user_id)] = {}
+                if len(parsed_rule) == 4:
+                    self.variables["people"][str(user_id)][parsed_rule[1]] = [parsed_rule[0], parsed_rule[2], parsed_rule[3]]
+                else:
+                    self.variables["people"][str(user_id)][parsed_rule[1]] = [parsed_rule[0], parsed_rule[2], parsed_rule[3], parsed_rule[4]]
+                self.telegram.dispatcher.bot.send_message(chat_id=user_id,text="Added Rule: " + str(parsed_rule))
                 
-    time.sleep(10)
+                
+        
+    def parse_string_rule(self, rule):
+        rule = list(map(str.strip, rule.split()))
+        currency = rule[0]
+        rule = rule[1:]
+        if rule[0] in self.markets.keys():
+            market = rule[0]
+            currency = currency if currency in self.markets[market] else None
+            rule = rule[1:]
+        else:
+            market = self.main_market
+            currency = currency if currency in self.markets[self.main_market] else None
+        if currency == None:
+            return None
+        Label = False
+        if len(rule) == 3:
+            Label = rule[2]
+            rule = rule[0:2]
+        elif len(rule) == 1:
+            sell = int(rule[0]) if rule[0].isdigit() else rule[0]
+            buy = None
+        else:
+            sell = int(rule[0]) if rule[0].isdigit() else rule[0]
+            buy = int(rule[1]) if rule[1].isdigit() else rule[1]
+            if (buy == "none") or (buy == "n"):
+                buy = None
+        if Label:
+            return market, currency, buy, sell, Label
+        else:
+            return market, currency, buy, sell
+        
+    def alert_conky(self):
+        output=""
+        for k, out in self.alert_output["conky"].items():
+            output += k.upper() + "${alignr}"
+            net = sum([val[0] for val in out])
+            if net > 0:
+                output += "${color green}"
+            elif net < 0:
+                output += "${color red}"
+            else:
+                output += "${color}"
+            output += str(self.tickers[self.main_market][k])
+            output += "${color}"
+            output += ""
+            if self.tickers[self.main_market][k] > self.prev_tickers[self.main_market][k]:
+                output += "${font Font Awesome 5 Free Solid:size=12:vertical-align=25%}${color green} ${color}"
+            elif self.tickers[self.main_market][k] < self.prev_tickers[self.main_market][k]:
+                output += "${font Font Awesome 5 Free Solid:size=12:vertical-align=25%}${color red} ${color}"
+            else: 
+                output += "${font}${color white} =${color}"
+            output += "${font}\n"
+        with open(self.conky, "w") as f:
+            f.truncate(0)
+            f.write(output)
+        print(self.conky)
+    def alert_notify(self):
+        output=""
+        for k, out in self.alert_output["conky"].items():
+            net = sum([val[0] for val in out])
+            if net > 0:
+                Notification = Gio.Notification.new("Buy " + k.upper())
+                Notification.set_body(str(out))
+                Icon = Gio.ThemedIcon.new("dialog-information")
+                Notification.set_icon(Icon)
+                self.notify_app.send_notification(None, Notification)
+            elif net < 0:
+                Notification = Gio.Notification.new("Sell " + k.upper())
+                Notification.set_body(str(out))
+                Icon = Gio.ThemedIcon.new("dialog-information")
+                Notification.set_icon(Icon)
+                self.notify_app.send_notification(None, Notification)
+            wxsell = float(self.wazirx_response[k+"inr"]["sell"])
+            wxbuy = float(self.wazirx_response[k+"inr"]["buy"])
+            wxlast = float(self.wazirx_response[k+"inr"]["last"])
+            print(wxbuy, wxsell - wxbuy, wxlast*0.01)
+            if wxsell - wxbuy > wxlast*0.005:
+                
+                Notification = Gio.Notification.new("Quick Trade " + k.upper())
+                Notification.set_body("Buy: " + str(wxbuy) + "\nSell: " + str(wxsell))
+                Icon = Gio.ThemedIcon.new("dialog-information")
+                Notification.set_icon(Icon)
+                self.notify_app.send_notification(None, Notification)
+                
+    def alert_telegram(self):
+        for k, x in self.alert_output['telegram'].items():
+            for c, v in x.items():
+                output = ""
+                net = sum([val[0] for val in v])
+                if net > 0:
+                    output = "<b>Buy: " + c + "</b>\n"
+                elif net < 0:
+                    output = "<b>Sell: " + c + "</b>\n"
+                elif len(v) > len([val[0] for val in v if val == 0]) :
+                    return
+                output+=str(v)
+                self.telegram.dispatcher.bot.send_message(chat_id=k, text=output, parse_mode="html")
 
-"$(curl https://api.wazirx.com/api/v2/trades?market=$MARKET| jq .[].price | tr -d \")"
+    def compare_conky(self):
+        if "conky" in self.variables.keys():
+             if isinstance(self.variables["conky"], str):
+                 return eval(self.variables["conky"])
+             else:
+                 pass
+        else:
+             inp = input("Conky:")
+             try:
+                self.variables["conky"] = json.load(inp)
+             except:
+                self.variables["conky"] = inp
+             self.save_variables()
+             return self.compare_conky()
+             
+    def compare_notify(self):
+        if "notify" in self.variables.keys():
+             if isinstance(self.variables["notify"], str):
+                 return eval(self.variables["notify"])
+             else:
+                 pass
+        else:
+             inp = input("Notify:")
+             try:
+                self.variables["notify"] = json.load(inp)
+             except:
+                self.variables["notify"] = inp
+             self.save_variables()
+             return self.compare_conky()
+    def libnotify_alert(self):
+        self.alert_hooks.append("libnotify")
+    def add_telegram_user(self, chat_id):
+        self.variables["people"][str(chat_id)] = {}
+        print(self.variables["people"][str(chat_id)])
+        self.save_variables()
+    def load_variables(self):
+        if self.variables_file is None:
+            variables_file = '~/.config/crypto'
+        if not os.path.isfile(self.variables_file):
+            with open(self.variables_file, "wb") as f:
+                people = {}
+                variables={"KEY": input("KEY:"), "people":people}
+                pickle.dump(variables, f)
+            
+        with open(self.variables_file, "rb") as f:
+            output = pickle.load(f)
+        return output
+    def save_variables(self):
+        with open(self.variables_file, "wb") as f:
+            pickle.dump(self.variables, f)
+
+class Telegram:
+    """Hello, I am a bot for tracking cryptocurrency with various indicators.
+Syntax:
+currency platform high low
+A simple rule is as defined above. Currently there are two platforms, coinbase and wazirx.
+Rules can be concatenated with a comma. """
+    def __init__(self, token, allow_new=False, update=None, parent=None):
+        from telegram.ext import CommandHandler
+        from telegram.ext import Updater
+        from telegram import Update
+        from telegram.ext import CallbackContext, PollAnswerHandler, PollHandler
+        from telegram.error import TimedOut
+        from telegram.ext import MessageHandler, Filters
+        self.allow_new = allow_new
+        self.parent=parent
+        self.update = update
+        self.updater = Updater(token=token, use_context=True)
+        self.dispatcher = self.updater.dispatcher
+        self.start_handler = CommandHandler('start', self.start)
+        self.echo_handler = MessageHandler(Filters.text & (~Filters.command), self.echo)
+        self.dispatcher.add_handler(self.start_handler)
+        self.dispatcher.add_handler(self.echo_handler)
+        self.updater.start_polling()
+        
+    def start(self, update, context):
+        if self.allow_new:
+            if (update.effective_chat.id in self.parent.variables["people"].keys()):
+                context.bot.send_message(chat_id=update.effective_chat.id, text="Already Registered")
+            else:
+                context.bot.send_message(chat_id=update.effective_chat.id, text="Registered")
+            context.bot.send_message(chat_id=update.effective_chat.id, text=self.__doc__)
+            self.parent.add_telegram_user(update.effective_chat.id)
+        else:
+            context.bot.send_message(chat_id=update.effective_chat.id, text="Cannot Register")
+            print(update.effective_chat.id)
+    def echo(self, update, context):
+        try:
+            person = update.effective_chat.id
+            rules_string = update.message.text.lower()
+            self.parent.add_rules(person, rules_string)
+        except Exception as e:
+            print(str(e))
+    def help_string(self):
+        pass
+def start(update, context):
+    context.bot.send_message(chat_id=update.effective_chat.id, text="Hello")
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--conky')
+    parser.add_argument('-f')
+    parser.add_argument('-t')
+    parser.add_argument('--cb', default=False, action='store_true')
+    parser.add_argument('--notify', default=False, action='store_true')
+    parser.add_argument('--telegram', default=False, action='store_true')
+    parser.add_argument('--allow_new', default=False, action='store_true')
+    args = parser.parse_args()
+    crypto = Crypto(variables_file=args.f, telegram=args.telegram,
+                    conky=args.conky,
+                    notify=args.notify, telegram_allow_new=args.allow_new)
+    try:
+        crypto.start(args.t or 10)
+    except KeyboardInterrupt:
+        crypto.save_variables()
