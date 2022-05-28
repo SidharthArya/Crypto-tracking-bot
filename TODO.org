@@ -1,1 +1,3 @@
 * TODO Convert from list based to dict based
+* TODO Add Historical Data
+  curl "https://x.wazirx.com/api/v2/k?market=ethinr&period=720&limit=2000&timestamp=1558772298"
